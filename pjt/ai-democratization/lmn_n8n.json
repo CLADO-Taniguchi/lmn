@@ -1,0 +1,175 @@
+{
+    "meta": {
+      "instanceId": "redshift-q-integration-v2"
+    },
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "ask-data",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook-input",
+        "name": "日本語クエリ受信",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 1,
+        "position": [240, 300],
+        "webhookId": "user-query-jp"
+      },
+      {
+        "parameters": {
+          "model": "gpt-4",
+          "messages": {
+            "messageType": "text",
+            "message": "以下の日本語のデータベース問い合わせを、Amazon Redshift Query Editor用の自然な英語に翻訳してください。データベースのテーブル名やカラム名は変更しないでください。\n\n日本語クエリ: {{$json.query}}\n\n英語クエリ:"
+          },
+          "options": {
+            "temperature": 0.2
+          }
+        },
+        "id": "translate-query",
+        "name": "日本語→英語翻訳",
+        "type": "n8n-nodes-base.openAi",
+        "typeVersion": 1,
+        "position": [460, 300],
+        "credentials": {
+          "openAiApi": {
+            "id": "openai-api-key",
+            "name": "OpenAI API Key"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "// Amazon Q generative SQL API呼び出しのシミュレーション\n// 実際の実装では、AWS SDK v3を使用してAmazon Q APIを呼び出します\n\nconst translatedQuery = $node['日本語→英語翻訳'].json.choices[0].message.content;\nconst originalQuery = $node['日本語クエリ受信'].json.body.query;\n\n// 翻訳されたクエリに基づいてSQL生成（シミュレーション）\nlet generatedSql = \"\";\nlet explanation = \"\";\n\nif (translatedQuery.toLowerCase().includes('count') && translatedQuery.toLowerCase().includes('record')) {\n  generatedSql = `SELECT COUNT(*) as total_rows FROM datamart.aas_summary;`;\n  explanation = \"Generated SQL to count total records in the aas_summary table\";\n} else if (translatedQuery.toLowerCase().includes('prefecture') && translatedQuery.toLowerCase().includes('top')) {\n  generatedSql = `SELECT \n    prefecture,\n    COUNT(*) AS record_count\nFROM \n    datamart.aas_summary\nGROUP BY \n    prefecture\nORDER BY \n    record_count DESC\nLIMIT 5;`;\n  explanation = \"Generated SQL to show top 5 prefectures by record count\";\n} else if (translatedQuery.toLowerCase().includes('2024')) {\n  generatedSql = `SELECT \n    prefecture,\n    COUNT(*) AS record_count\nFROM \n    datamart.aas_summary\nWHERE \n    reg_datetime BETWEEN '2024-01-01' AND '2024-12-31'\nGROUP BY \n    prefecture\nORDER BY \n    record_count DESC\nLIMIT 5;`;\n  explanation = \"Generated SQL to show records from 2024 grouped by prefecture\";\n} else {\n  // デフォルトクエリ\n  generatedSql = `SELECT * FROM datamart.aas_summary LIMIT 10;`;\n  explanation = \"Generated SQL to show sample data from the table\";\n}\n\nreturn {\n  json: {\n    originalQuery: originalQuery,\n    translatedQuery: translatedQuery,\n    generatedSql: generatedSql,\n    explanation: explanation,\n    confidence: 0.95,\n    timestamp: new Date().toISOString()\n  }\n};"
+        },
+        "id": "amazon-q-simulation",
+        "name": "Amazon Q SQL生成（シミュレーション）",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [680, 300]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "={{$node['Amazon Q SQL生成（シミュレーション）'].json.generatedSql}}",
+          "options": {}
+        },
+        "id": "redshift-execute",
+        "name": "Redshift SQL実行",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2,
+        "position": [900, 300],
+        "credentials": {
+          "postgres": {
+            "id": "redshift-db-credentials",
+            "name": "Redshift Database Credentials"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "model": "gpt-4",
+          "messages": {
+            "messageType": "text",
+            "message": "以下のSQLクエリ実行結果を、非技術者にもわかりやすい日本語で説明してください。\n\n元の質問: {{$node['日本語クエリ受信'].json.body.query}}\n実行したSQL: {{$node['Amazon Q SQL生成（シミュレーション）'].json.generatedSql}}\n実行結果: {{$node['Redshift SQL実行'].json}}\n\n分かりやすい説明:"
+          },
+          "options": {
+            "temperature": 0.3
+          }
+        },
+        "id": "result-explanation",
+        "name": "結果の日本語説明",
+        "type": "n8n-nodes-base.openAi",
+        "typeVersion": 1,
+        "position": [1120, 300],
+        "credentials": {
+          "openAiApi": {
+            "id": "openai-api-key",
+            "name": "OpenAI API Key"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": {
+            "success": true,
+            "original_query": "={{$node['日本語クエリ受信'].json.body.query}}",
+            "english_query": "={{$node['日本語→英語翻訳'].json.choices[0].message.content}}",
+            "generated_sql": "={{$node['Amazon Q SQL生成（シミュレーション）'].json.generatedSql}}",
+            "results": "={{$node['Redshift SQL実行'].json}}",
+            "explanation": "={{$node['結果の日本語説明'].json.choices[0].message.content}}",
+            "confidence": "={{$node['Amazon Q SQL生成（シミュレーション）'].json.confidence}}",
+            "timestamp": "={{$now}}"
+          }
+        },
+        "id": "response-output",
+        "name": "レスポンス返却",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [1340, 300]
+      }
+    ],
+    "connections": {
+      "日本語クエリ受信": {
+        "main": [
+          [
+            {
+              "node": "日本語→英語翻訳",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "日本語→英語翻訳": {
+        "main": [
+          [
+            {
+              "node": "Amazon Q SQL生成（シミュレーション）",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Amazon Q SQL生成（シミュレーション）": {
+        "main": [
+          [
+            {
+              "node": "Redshift SQL実行",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Redshift SQL実行": {
+        "main": [
+          [
+            {
+              "node": "結果の日本語説明",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "結果の日本語説明": {
+        "main": [
+          [
+            {
+              "node": "レスポンス返却",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1"
+    }
+  }
