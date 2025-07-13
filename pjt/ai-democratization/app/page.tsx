@@ -59,6 +59,7 @@ export default function Home() {
         }));
 
       // n8nワークフローAPI呼び出し
+      // オプション1: API Route経由（推奨）
       const response = await fetch('/api/n8n-webhook', {
         method: 'POST',
         headers: {
@@ -71,6 +72,20 @@ export default function Home() {
           conversationHistory: conversationHistory
         })
       });
+
+      // オプション2: 直接接続版（テスト用）
+      // const response = await fetch('https://clado.app.n8n.cloud/webhook-test/ask-data', {
+      //   method: 'POST',
+      //   headers: {
+      //     'Content-Type': 'application/json',
+      //   },
+      //   body: JSON.stringify({
+      //     query: userMessage.content,
+      //     timestamp: userMessage.timestamp.toISOString(),
+      //     sessionId: 'user-session-' + Date.now(),
+      //     conversationHistory: conversationHistory
+      //   })
+      // });
 
       if (!response.ok) {
         throw new Error('API呼び出しに失敗しました');
