@@ -1,0 +1,208 @@
+{
+  "meta": {
+    "instanceId": "redshift-q-integration-chat-v1"
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ask-data",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-input",
+      "name": "チャットクエリ受信",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "chat-query-jp"
+    },
+    {
+      "parameters": {
+        "jsCode": "// セッション管理と会話履歴の初期化\nconst sessionId = $json.sessionId || 'default';\nconst currentQuery = $json.query;\nconst timestamp = $json.timestamp || new Date().toISOString();\n\n// 会話履歴を管理（実際の実装では外部ストレージを使用）\nconst conversationHistory = $json.conversationHistory || [];\n\n// 前の質問からのコンテキストを構築\nlet contextPrompt = '';\nif (conversationHistory.length > 0) {\n  contextPrompt = '\\n\\n前の会話履歴:\\n';\n  conversationHistory.slice(-3).forEach((item, index) => {\n    contextPrompt += `${index + 1}. ユーザー: ${item.query}\\n   システム: ${item.response}\\n`;\n  });\n  contextPrompt += '\\n上記の会話履歴を考慮して、以下の質問に答えてください。\\n';\n}\n\nreturn {\n  json: {\n    sessionId: sessionId,\n    currentQuery: currentQuery,\n    timestamp: timestamp,\n    conversationHistory: conversationHistory,\n    contextPrompt: contextPrompt\n  }\n};"
+      },
+      "id": "session-management",
+      "name": "セッション管理",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4",
+        "messages": {
+          "messageType": "text",
+          "message": "以下の日本語のデータベース問い合わせを、Amazon Redshift Query Editor用の自然な英語に翻訳してください。データベースのテーブル名やカラム名は変更しないでください。{{$node['セッション管理'].json.contextPrompt}}\n\n現在の日本語クエリ: {{$node['セッション管理'].json.currentQuery}}\n\n英語クエリ:"
+        },
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "id": "translate-query",
+      "name": "コンテキスト考慮翻訳",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [680, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-api-key",
+          "name": "OpenAI API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Amazon Q generative SQL API呼び出しのシミュレーション（チャット対応版）\nconst translatedQuery = $node['コンテキスト考慮翻訳'].json.choices[0].message.content;\nconst originalQuery = $node['セッション管理'].json.currentQuery;\nconst conversationHistory = $node['セッション管理'].json.conversationHistory;\n\n// 会話履歴を考慮したSQL生成\nlet generatedSql = \"\";\nlet explanation = \"\";\nlet queryType = \"unknown\";\n\n// 前の質問からのコンテキストを分析\nconst hasRecentCount = conversationHistory.some(item => \n  item.query.includes('数') || item.query.includes('count') || item.query.includes('件数')\n);\n\nif (translatedQuery.toLowerCase().includes('count') && translatedQuery.toLowerCase().includes('record')) {\n  generatedSql = `SELECT COUNT(*) as total_rows FROM datamart.aas_summary;`;\n  explanation = \"総レコード数を取得するクエリを生成しました\";\n  queryType = \"count\";\n} else if (translatedQuery.toLowerCase().includes('prefecture') && translatedQuery.toLowerCase().includes('top')) {\n  generatedSql = `SELECT \n    prefecture,\n    COUNT(*) AS record_count\nFROM \n    datamart.aas_summary\nGROUP BY \n    prefecture\nORDER BY \n    record_count DESC\nLIMIT 5;`;\n  explanation = \"都道府県別のトップ5を取得するクエリを生成しました\";\n  queryType = \"ranking\";\n} else if (translatedQuery.toLowerCase().includes('2024')) {\n  generatedSql = `SELECT \n    prefecture,\n    COUNT(*) AS record_count\nFROM \n    datamart.aas_summary\nWHERE \n    reg_datetime BETWEEN '2024-01-01' AND '2024-12-31'\nGROUP BY \n    prefecture\nORDER BY \n    record_count DESC\nLIMIT 5;`;\n  explanation = \"2024年のデータを都道府県別に集計するクエリを生成しました\";\n  queryType = \"temporal\";\n} else if (originalQuery.includes('詳細') || originalQuery.includes('もっと')) {\n  // 前の質問の詳細を求められた場合\n  generatedSql = `SELECT \n    prefecture,\n    COUNT(*) AS record_count,\n    AVG(CASE WHEN amount IS NOT NULL THEN amount ELSE 0 END) AS avg_amount\nFROM \n    datamart.aas_summary\nGROUP BY \n    prefecture\nORDER BY \n    record_count DESC\nLIMIT 10;`;\n  explanation = \"前の質問の詳細情報を含むクエリを生成しました\";\n  queryType = \"detail\";\n} else {\n  // デフォルトクエリ\n  generatedSql = `SELECT * FROM datamart.aas_summary LIMIT 10;`;\n  explanation = \"サンプルデータを取得するクエリを生成しました\";\n  queryType = \"sample\";\n}\n\nreturn {\n  json: {\n    sessionId: $node['セッション管理'].json.sessionId,\n    originalQuery: originalQuery,\n    translatedQuery: translatedQuery,\n    generatedSql: generatedSql,\n    explanation: explanation,\n    queryType: queryType,\n    confidence: 0.95,\n    timestamp: new Date().toISOString(),\n    conversationHistory: conversationHistory\n  }\n};"
+      },
+      "id": "amazon-q-chat-simulation",
+      "name": "Amazon Q チャット対応SQL生成",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$node['Amazon Q チャット対応SQL生成'].json.generatedSql}}",
+        "options": {}
+      },
+      "id": "redshift-execute",
+      "name": "Redshift SQL実行",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [1120, 300],
+      "credentials": {
+        "postgres": {
+          "id": "redshift-db-credentials",
+          "name": "Redshift Database Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "gpt-4",
+        "messages": {
+          "messageType": "text",
+          "message": "以下のSQLクエリ実行結果を、非技術者にもわかりやすい日本語で説明してください。会話の流れを考慮した自然な回答をお願いします。\n\n{{$node['Amazon Q チャット対応SQL生成'].json.conversationHistory.length > 0 ? '会話の流れ: ' + JSON.stringify($node['Amazon Q チャット対応SQL生成'].json.conversationHistory.slice(-2)) : ''}}\n\n現在の質問: {{$node['Amazon Q チャット対応SQL生成'].json.originalQuery}}\n実行したSQL: {{$node['Amazon Q チャット対応SQL生成'].json.generatedSql}}\n実行結果: {{$node['Redshift SQL実行'].json}}\n\n分かりやすい説明:"
+        },
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "id": "result-explanation",
+      "name": "チャット形式結果説明",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [1340, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-api-key",
+          "name": "OpenAI API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 会話履歴を更新\nconst sessionId = $node['Amazon Q チャット対応SQL生成'].json.sessionId;\nconst currentQuery = $node['Amazon Q チャット対応SQL生成'].json.originalQuery;\nconst explanation = $node['チャット形式結果説明'].json.choices[0].message.content;\nconst conversationHistory = $node['Amazon Q チャット対応SQL生成'].json.conversationHistory;\n\n// 新しい会話エントリを追加\nconst newHistoryEntry = {\n  query: currentQuery,\n  response: explanation,\n  timestamp: new Date().toISOString(),\n  queryType: $node['Amazon Q チャット対応SQL生成'].json.queryType\n};\n\n// 会話履歴を更新（最新10件まで保持）\nconst updatedHistory = [...conversationHistory, newHistoryEntry].slice(-10);\n\nreturn {\n  json: {\n    sessionId: sessionId,\n    success: true,\n    original_query: currentQuery,\n    english_query: $node['Amazon Q チャット対応SQL生成'].json.translatedQuery,\n    generated_sql: $node['Amazon Q チャット対応SQL生成'].json.generatedSql,\n    results: $node['Redshift SQL実行'].json,\n    explanation: explanation,\n    confidence: $node['Amazon Q チャット対応SQL生成'].json.confidence,\n    timestamp: new Date().toISOString(),\n    conversationHistory: updatedHistory,\n    queryType: $node['Amazon Q チャット対応SQL生成'].json.queryType\n  }\n};"
+      },
+      "id": "history-update",
+      "name": "会話履歴更新",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$node['会話履歴更新'].json}}"
+      },
+      "id": "response-output",
+      "name": "チャットレスポンス返却",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1780, 300]
+    }
+  ],
+  "connections": {
+    "チャットクエリ受信": {
+      "main": [
+        [
+          {
+            "node": "セッション管理",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "セッション管理": {
+      "main": [
+        [
+          {
+            "node": "コンテキスト考慮翻訳",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "コンテキスト考慮翻訳": {
+      "main": [
+        [
+          {
+            "node": "Amazon Q チャット対応SQL生成",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Amazon Q チャット対応SQL生成": {
+      "main": [
+        [
+          {
+            "node": "Redshift SQL実行",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redshift SQL実行": {
+      "main": [
+        [
+          {
+            "node": "チャット形式結果説明",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "チャット形式結果説明": {
+      "main": [
+        [
+          {
+            "node": "会話履歴更新",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "会話履歴更新": {
+      "main": [
+        [
+          {
+            "node": "チャットレスポンス返却",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+} 

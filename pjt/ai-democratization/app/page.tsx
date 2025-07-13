@@ -46,17 +46,71 @@ export default function Home() {
     setInputValue('');
     setIsLoading(true);
 
-    // AIレスポンスのシミュレーション
-    setTimeout(() => {
+    try {
+      // 会話履歴を構築（AIメッセージのみ）
+      const conversationHistory = messages
+        .filter(msg => msg.type === 'ai')
+        .slice(-5) // 最新5件のAI応答のみ
+        .map(msg => ({
+          query: '', // 実際の実装では対応するユーザーメッセージを取得
+          response: msg.content,
+          timestamp: msg.timestamp.toISOString(),
+          queryType: 'unknown'
+        }));
+
+      // n8nワークフローAPI呼び出し
+      const response = await fetch('/api/n8n-webhook', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query: userMessage.content,
+          timestamp: userMessage.timestamp.toISOString(),
+          sessionId: 'user-session-' + Date.now(), // 実際の実装では永続的なセッションIDを使用
+          conversationHistory: conversationHistory
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('API呼び出しに失敗しました');
+      }
+
+      const data = await response.json();
+      
+      // より詳細なレスポンスを表示
+      let aiContent = data.explanation || 'データを分析しました。';
+      
+      // SQLクエリが生成された場合、追加情報を表示
+      if (data.generated_sql) {
+        aiContent += `\n\n実行したクエリ:\n\`\`\`sql\n${data.generated_sql}\n\`\`\``;
+      }
+      
+      // 結果データがある場合、簡潔に表示
+      if (data.results && Array.isArray(data.results) && data.results.length > 0) {
+        aiContent += `\n\n結果: ${data.results.length}件のデータを取得しました。`;
+      }
+      
       const aiMessage: Message = {
         id: (Date.now() + 1).toString(),
         type: 'ai',
-        content: `「${userMessage.content}」についてデータを分析しました。現在システムは開発中のため、実際のデータベースとの接続は準備中です。`,
+        content: aiContent,
         timestamp: new Date()
       };
+      
       setMessages(prev => [...prev, aiMessage]);
+    } catch (error) {
+      console.error('API Error:', error);
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        type: 'ai',
+        content: 'すみません、エラーが発生しました。もう一度お試しください。',
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
       setIsLoading(false);
-    }, 2000);
+    }
   };
 
   const handleQuickQuery = (query: string) => {
