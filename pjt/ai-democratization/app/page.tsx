@@ -61,7 +61,7 @@ export default function Home() {
 
       // n8nワークフローAPI呼び出し
       // 直接n8nにアクセス（CORS対応が必要）
-      const n8nUrl = process.env.NEXT_PUBLIC_N8N_WEBHOOK_URL || 'https://clado.app.n8n.cloud/webhook/simple-test-20250714';
+      const n8nUrl = 'https://clado.app.n8n.cloud/webhook/simple-test-20250714';
       const response = await fetch(n8nUrl, {
         method: 'POST',
         headers: {
