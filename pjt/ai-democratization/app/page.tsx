@@ -21,6 +21,7 @@ export default function Home() {
   ]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null); // セッション管理
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -59,7 +60,7 @@ export default function Home() {
         }));
 
       // n8nワークフローAPI呼び出し
-      // オプション1: API Route経由（推奨）
+      // API Route経由でセッション管理
       const response = await fetch('/api/n8n-webhook', {
         method: 'POST',
         headers: {
@@ -68,30 +69,45 @@ export default function Home() {
         body: JSON.stringify({
           query: userMessage.content,
           timestamp: userMessage.timestamp.toISOString(),
-          sessionId: 'user-session-' + Date.now(), // 実際の実装では永続的なセッションIDを使用
+          sessionId: currentSessionId, // 既存のセッションIDを送信（初回はnull）
           conversationHistory: conversationHistory
         })
       });
 
-      // オプション2: 直接接続版（テスト用）
-      // const response = await fetch('https://clado.app.n8n.cloud/webhook-test/ask-data', {
-      //   method: 'POST',
-      //   headers: {
-      //     'Content-Type': 'application/json',
-      //   },
-      //   body: JSON.stringify({
-      //     query: userMessage.content,
-      //     timestamp: userMessage.timestamp.toISOString(),
-      //     sessionId: 'user-session-' + Date.now(),
-      //     conversationHistory: conversationHistory
-      //   })
-      // });
-
       if (!response.ok) {
-        throw new Error('API呼び出しに失敗しました');
+        const errorData = await response.json();
+        
+        // n8nワークフロー無効エラーの場合、詳細メッセージを表示
+        if (errorData.error === 'n8nワークフローが無効です') {
+          const aiMessage: Message = {
+            id: Date.now().toString(),
+            type: 'ai',
+            content: `⚠️ ${errorData.explanation}\n\n💡 ${errorData.hint}`,
+            timestamp: new Date()
+          };
+          setMessages(prev => [...prev, aiMessage]);
+          setIsLoading(false);
+          return;
+        }
+        
+        // その他のエラーの場合
+        const aiMessage: Message = {
+          id: Date.now().toString(),
+          type: 'ai',
+          content: `❌ エラー: ${errorData.error || 'API呼び出しに失敗しました'}\n\n${errorData.explanation || 'もう一度お試しください。'}`,
+          timestamp: new Date()
+        };
+        setMessages(prev => [...prev, aiMessage]);
+        setIsLoading(false);
+        return;
       }
 
       const data = await response.json();
+      
+      // API側から返されたセッションIDを保存
+      if (data.sessionId && data.sessionId !== currentSessionId) {
+        setCurrentSessionId(data.sessionId);
+      }
       
       // より詳細なレスポンスを表示
       let aiContent = data.explanation || 'データを分析しました。';
@@ -102,8 +118,13 @@ export default function Home() {
       }
       
       // 結果データがある場合、簡潔に表示
-      if (data.results && Array.isArray(data.results) && data.results.length > 0) {
-        aiContent += `\n\n結果: ${data.results.length}件のデータを取得しました。`;
+      if (data.results) {
+        if (Array.isArray(data.results)) {
+          aiContent += `\n\n結果: ${data.results.length}件のデータを取得しました。`;
+        } else if (typeof data.results === 'object') {
+          // オブジェクトの場合、JSONとして表示
+          aiContent += `\n\n結果:\n\`\`\`json\n${JSON.stringify(data.results, null, 2)}\n\`\`\``;
+        }
       }
       
       const aiMessage: Message = {
