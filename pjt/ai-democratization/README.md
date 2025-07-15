@@ -22,14 +22,11 @@ npm install
 Create a `.env.local` file in the root directory and add the following:
 
 ```bash
-# n8nワークフローのWebhook URL
-N8N_WEBHOOK_URL=https://your-n8n-instance.com/webhook/ask-data
+# n8nワークフローのWebhook URL（TEST URLを使用）
+N8N_WEBHOOK_URL=https://clado.app.n8n.cloud/webhook-test/simple-test-20250714
 
-# 開発環境用（ローカルのn8nインスタンス）
-# N8N_WEBHOOK_URL=http://localhost:5678/webhook/ask-data
-
-# 本番環境用
-# N8N_WEBHOOK_URL=https://your-production-n8n.com/webhook/ask-data
+# 注意: n8nのバグのため、Production URLは機能しません
+# 必ずTest URLを使用してください
 ```
 
 ### 3. Run the development server

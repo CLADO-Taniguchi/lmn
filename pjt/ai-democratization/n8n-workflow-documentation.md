@@ -1,3 +1,4 @@
+
 # n8n チャット対応ワークフロー設計書
 
 ## 概要
@@ -310,3 +311,160 @@ Redshift SQL実行 (クエリ実行)
 
 **最終更新**: 2025年1月13日  
 **担当者**: Lumine Data Intelligence Platform開発チーム 
+
+## トラブルシューティング
+
+### Claude APIレスポンスサイズ制限問題
+
+**問題**: Redshift SQL実行ノードで`{{ $('Code').item.json.content[0].text }}`を使用する際、Claudeから受け取ったテキスト情報が配列に対して大きすぎると原因不明のエラーが発生する。
+
+**症状**:
+- n8nワークフローが途中で停止する
+- 明確なエラーメッセージが表示されない
+- 大きなSQLクエリや長いレスポンスで発生しやすい
+
+**原因**:
+- Claude APIからの大量のテキストレスポンス
+- n8nの内部配列処理制限
+- PostgreSQL/Redshiftノードでの入力サイズ制限
+
+**対策**:
+1. **レスポンス長制限**: Claude APIへのmax_tokensパラメータを適切に設定
+2. **テキスト分割**: 長いSQLクエリは複数に分割して実行
+3. **エスケープ処理**: 特殊文字や改行の適切な処理（Codeノードで実装済み）
+4. **デバッグモード**: 各ノードでのデータサイズを監視
+
+**推奨設定**:
+```json
+{
+  "max_tokens": 500,  // 長すぎるレスポンスを防ぐ
+  "temperature": 0.2   // 一貫性のある短い回答を促進
+}
+```
+
+**注意**: この問題は前回の重要な仕様議論で特定されたため、本番環境では必ず考慮すること。
+
+### n8n Cloud Webhook URL設定問題
+
+**問題**: フロントエンドのAPIルートが`localhost:5678`を参照しているため、n8n Cloudインスタンスに接続できない。
+
+**症状**:
+- CLIからの直接テスト: ✅ 成功
+- フロントエンドからのアクセス: ❌ 404エラー
+
+**対策**:
+1. n8n Cloud管理画面からWebhook URLを確認
+2. APIルート(`app/api/n8n-webhook/route.ts`)のデフォルトURLを修正
+3. 環境変数`N8N_WEBHOOK_URL`に正しいCloud URLを設定
+
+**設定例**:
+```typescript
+// 正しい設定（TEST URLを使用）
+const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL || 'https://clado.app.n8n.cloud/webhook-test/simple-test-20250714';
+```
+
+**重要な注意点**:
+- n8nのバグのため、Production URLは機能しない
+- 必ずTest URLを使用すること
+- URL形式: `https://[instance].app.n8n.cloud/webhook-test/[path]` 
+
+## 2025年1月15日 作業ログ - SQLプロンプト修正とDB構造問題
+
+### 発見された問題
+
+1. **Claude APIプロンプトの問題**
+   - 存在しないテーブル（`datamart.members`）を参照してSQLを生成
+   - 実際のテーブルは `datamart.aas_summary`
+   - 存在しないカラム（`prefecture`）を使用（実際のカラム名は未確認）
+
+2. **SQLエスケープ処理の問題**
+   - Codeノードが過剰にエスケープ処理を実行
+   - 例: `WHERE prefecture = '香川県'` → `WHERE prefecture = \香川県\県\\`
+   - SQL構文エラーの原因となっていた
+
+3. **環境変数の問題**
+   - Production URL (`https://clado.app.n8n.cloud/webhook/ask-data`) が404エラー
+   - Test URL (`https://clado.app.n8n.cloud/webhook-test/simple-test-20250714`) に変更で解決
+
+### 実施した修正
+
+1. **環境変数の修正**
+   ```bash
+   # .env.localファイルを作成
+   N8N_WEBHOOK_URL=https://clado.app.n8n.cloud/webhook-test/simple-test-20250714
+   ```
+
+2. **Claude APIプロンプトの修正案**
+   ```json
+   {
+     "model": "claude-3-5-sonnet-20241022",
+     "max_tokens": 200 //配列のデータ量が多いと配列が破綻して原因不明のエラーになるため上限を設定,
+     "messages": [
+       {
+         "role": "user",
+         "content": "以下の日本語クエリを、利用可能なデータベーステーブル datamart.aas_summary を参照してSQLに変換してください。このテーブルにはprefecture（都道府県）、date（日付）、sales（売上）、category（カテゴリ）などの列が含まれています。コードブロックは使わず、SQLのみ返してください: {{ $('Webhook').item.json.body.query }}"
+       }
+     ]
+   }
+   ```
+
+3. **Codeノードのエスケープ処理修正案**
+   ```javascript
+   // エスケープ処理を削除した版
+   function cleanClaudeResponse(str) {
+     if (typeof str !== 'string') return str;
+     return str
+       .replace(/\n/g, ' ')           // 改行をスペースに置換
+       .replace(/\r/g, '')            // キャリッジリターンを削除
+       .replace(/\s+/g, ' ')          // 連続するスペースを1つに
+       .trim();                       // 前後の空白を削除
+   }
+   ```
+
+### 根本的な設計問題
+
+**現在のアーキテクチャの限界**：
+- Claude APIがデータベース構造を把握していない状態でSQLを生成
+- プロンプトに仮定のカラム名を含めている（実際と異なる可能性）
+- 業務で複数のテーブルを扱う場合に対応できない
+
+### 今後の検討事項
+
+1. **データベーススキーマ管理の実装**
+   - `db_schema.yml`ファイルを作成（全テーブル定義）
+   - n8nワークフローにスキーマ読み込みノードを追加
+   - Claude APIに完全なDB構造を提供
+
+2. **推奨されるワークフロー改善**
+   ```
+   Webhook → Schema File読込 → Claude API（全DB構造付き） → SQL生成 → 実行
+   ```
+
+3. **代替アプローチの検討**
+   - ベクトルDBを使用した関連テーブル自動検出
+   - メタデータAPIの構築
+   - 動的スキーマ取得とキャッシング
+   - セマンティックマッピングの実装
+
+4. **実際のテーブル構造の確認**
+   - `datamart.aas_summary`の正確なカラム名を確認する必要あり
+   - `DESCRIBE datamart.aas_summary`または`SELECT * FROM datamart.aas_summary LIMIT 1`の実行
+
+5. **エラーハンドリングの改善**
+   - 空のレスポンス処理
+   - SQL実行エラーの詳細表示
+   - ユーザーフレンドリーなエラーメッセージ
+
+### 次のステップ
+
+1. 実際のDB構造を確認
+2. db_schema.ymlファイルの完成
+3. n8nワークフローへのスキーマ読み込みノード追加
+4. Claude APIプロンプトの全面改訂
+5. エンドツーエンドのテスト実行
+
+**注意**: 現在の実装はPoCレベルであり、本番環境では以下が必要：
+- 適切なDB構造管理
+- セキュリティ対策（SQLインジェクション防止）
+- エラーハンドリングの強化
+- パフォーマンス最適化 

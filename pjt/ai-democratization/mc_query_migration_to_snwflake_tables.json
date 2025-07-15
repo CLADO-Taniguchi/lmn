@@ -1,0 +1,418 @@
+{
+  "name": "mc_query_migration_to_snwflake_tables",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "dc5f7b51-3b1f-443b-9b76-8721da4fb9fd",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        660,
+        0
+      ],
+      "id": "ca079bb5-49ea-4414-a592-535d9aec3a3a",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "11mpWBcHkLxiZnelOFX1Mdo920GmdZsbV6a_RyyGW32s",
+          "mode": "list",
+          "cachedResultName": "SMC_マイグレーション",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/11mpWBcHkLxiZnelOFX1Mdo920GmdZsbV6a_RyyGW32s/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "シート1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/11mpWBcHkLxiZnelOFX1Mdo920GmdZsbV6a_RyyGW32s/edit#gid=0"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        220,
+        0
+      ],
+      "id": "5b3ee0a0-71fc-4646-8569-5ae58616c501",
+      "name": "Google Sheets読み込み",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "QNJk0anZquSFmKYH",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Googleシートから取得したデータからAutomation一覧を抽出\nconst items = $input.all();\nconst automationSet = new Set();\n\nitems.forEach(item => {\n  const automationName = item.json.automation_en;\n  if (automationName && automationName.trim() !== '' && automationName !== 'automation_en') {\n    automationSet.add(automationName.trim());\n  }\n});\n\nconst automationList = Array.from(automationSet).sort();\n\nreturn automationList.map(automationName => ({\n  json: { automation_name_en: automationName }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "id": "abcfa549-6781-4204-bca4-72b9b4bbec1b",
+      "name": "Automation一覧抽出"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 現在のAutomationに該当するデータのみ抽出\nconst currentAutomation = $json.automation_name_en;\n\n// 正しいノード名に修正\nconst allSheetData = $('Google Sheets読み込み').all();\n\nconst automationSteps = allSheetData.filter(item => \n  item.json.automation_en === currentAutomation\n);\n\nconsole.log(`Processing Automation: ${currentAutomation}`);\nconsole.log(`Found ${automationSteps.length} steps for this automation`);\n\nreturn automationSteps;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        60
+      ],
+      "id": "5256cc0c-d156-4f5c-9ace-c55d029889cc",
+      "name": "該当データ抽出"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Marketing Cloud → Snowflake SQL変換（新カラム構造対応）\nconst items = $input.all();\n\nreturn items.map(item => {\n  // Marketing Cloud → Snowflake SQL変換関数\n  function convertMcToSnowflake(sqlQuery) {\n    if (typeof sqlQuery !== 'string') return sqlQuery;\n    \n    return sqlQuery\n      // 角括弧で囲まれたカラム名を二重引用符に変換\n      .replace(/\\[([^\\]]+)\\]/g, '\"$1\"')\n      \n      // Marketing Cloud日付関数をSnowflake用に変換\n      .replace(/FORMAT\\s*\\(\\s*([^,]+),\\s*'([^']+)'\\s*\\)/gi, 'TO_CHAR($1, \\'$2\\')')\n      .replace(/GETDATE\\s*\\(\\s*\\)/gi, 'CURRENT_TIMESTAMP()')\n      .replace(/DATEADD\\s*\\(\\s*day\\s*,/gi, 'DATEADD(DAY,')\n      .replace(/DATEADD\\s*\\(\\s*hh\\s*,/gi, 'DATEADD(HOUR,')\n      \n      // その他のエスケープ処理\n      .replace(/'/g, \"''\")           // シングルクォートをエスケープ\n      .replace(/\\n/g, ' ')           // 改行を空白に\n      .replace(/\\r/g, '')            // キャリッジリターンを削除\n      .replace(/\\s+/g, ' ')          // 連続スペースを1つに\n      .trim();\n  }\n\n  return {\n    json: {\n      automation_name_en: item.json.automation_name_en,\n      step_name_en: item.json.step_en,\n      code: convertMcToSnowflake(item.json.code),\n      table: item.json.table,\n      data_action: item.json.data_action\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1220,
+        60
+      ],
+      "id": "6228eddc-fcc3-4c4b-a014-b0eb5680aac0",
+      "name": "MC-Snowflake変換"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "MERGE INTO mc_automation_studios AS target\nUSING (\n    SELECT '{{ $json.automation_name_en }}' as automation_name_en\n) AS source\nON target.automation_name_en = source.automation_name_en\nWHEN NOT MATCHED THEN\n    INSERT (automation_name_en, automation_description, status)\n    VALUES (\n        source.automation_name_en,\n        'Migration from Marketing Cloud: ' || source.automation_name_en,\n        'ACTIVE'\n    )\nWHEN MATCHED THEN\n    UPDATE SET updated_at = CURRENT_TIMESTAMP()"
+      },
+      "type": "n8n-nodes-base.snowflake",
+      "typeVersion": 1,
+      "position": [
+        1400,
+        60
+      ],
+      "id": "79ab9721-032a-4cd8-9c0c-4311d6bec12b",
+      "name": "Automation登録",
+      "alwaysOutputData": false,
+      "executeOnce": false,
+      "notesInFlow": false,
+      "credentials": {
+        "snowflake": {
+          "id": "JbIzaQVbUV9HdkL2",
+          "name": "n8n_poc"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- UPSERT方式：重複時は更新、存在しない時は挿入\nMERGE INTO mc_automation_steps AS target\nUSING (\n    SELECT \n        (SELECT id FROM mc_automation_studios WHERE automation_name_en = '{{ $('MC-Snowflake変換').first().json.automation_name_en }}') as automation_id,\n        '{{ $('MC-Snowflake変換').first().json.automation_name_en }}' as automation_name_en,\n        '{{ $('MC-Snowflake変換').first().json.step_name_en }}' as step_name_en,\n        COALESCE(\n            (SELECT MAX(step_order) + 1 \n             FROM mc_automation_steps \n             WHERE automation_id = (SELECT id FROM mc_automation_studios WHERE automation_name_en = '{{ $('MC-Snowflake変換').first().json.automation_name_en }}')), \n            1\n        ) as step_order,\n        '{{ $('MC-Snowflake変換').first().json.target_table }}' as target_table,\n        '{{ $('MC-Snowflake変換').first().json.data_action }}' as data_action,\n        'ORIGINAL_QUERY_PLACEHOLDER' as original_query,\n        '{{ $('MC-Snowflake変換').first().json.code }}' as optimized_query,\n        'Loop処理による自動最適化' as optimization_note,\n        'SUCCESS' as conversion_status\n    WHERE '{{ $('MC-Snowflake変換').first().json.step_name_en }}' IS NOT NULL\n      AND '{{ $('MC-Snowflake変換').first().json.step_name_en }}' != 'undefined'\n      AND TRIM('{{ $('MC-Snowflake変換').first().json.step_name_en }}') != ''\n      AND '{{ $('MC-Snowflake変換').first().json.automation_name_en }}' IS NOT NULL\n      AND '{{ $('MC-Snowflake変換').first().json.automation_name_en }}' != 'undefined'\n      AND TRIM('{{ $('MC-Snowflake変換').first().json.automation_name_en }}') != ''\n) AS source\nON target.automation_name_en = source.automation_name_en \n   AND target.step_name_en = source.step_name_en\nWHEN NOT MATCHED THEN\n    INSERT (automation_id, automation_name_en, step_name_en, step_order, target_table, \n            data_action, original_query, optimized_query, optimization_note, conversion_status)\n    VALUES (source.automation_id, source.automation_name_en, source.step_name_en, \n            source.step_order, source.target_table, source.data_action, source.original_query, \n            source.optimized_query, source.optimization_note, source.conversion_status)\nWHEN MATCHED THEN\n    UPDATE SET \n        optimized_query = source.optimized_query,\n        optimization_note = source.optimization_note,\n        conversion_status = source.conversion_status,\n        created_at = CURRENT_TIMESTAMP();"
+      },
+      "type": "n8n-nodes-base.snowflake",
+      "typeVersion": 1,
+      "position": [
+        1580,
+        60
+      ],
+      "id": "5658a0e1-13a1-42c7-942d-6cdcc5b85020",
+      "name": "Steps登録",
+      "credentials": {
+        "snowflake": {
+          "id": "JbIzaQVbUV9HdkL2",
+          "name": "n8n_poc"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- 現在のAutomationの全ステップデータ取得\nSELECT \n    a.automation_name_en,\n    COUNT(s.step_order) as total_steps,\n    LISTAGG(\n        CONCAT(\n            '-- ================================================', CHAR(10),\n            '-- Step ', s.step_order::STRING, ': ', s.step_name_en, CHAR(10),\n            '-- Target: ', COALESCE(s.target_table, 'Unknown'), ' (', COALESCE(s.data_action, 'Unknown'), ')', CHAR(10),\n            '-- ================================================', CHAR(10), CHAR(10),\n            s.optimized_query, ';', CHAR(10), CHAR(10)\n        ),\n        ''\n    ) WITHIN GROUP (ORDER BY s.step_order) as combined_sql,\n    CURRENT_TIMESTAMP()::STRING as created_at\nFROM mc_automation_studios a\nJOIN mc_automation_steps s ON a.id = s.automation_id\nWHERE s.conversion_status = 'SUCCESS'\n  AND a.automation_name_en = '{{ $('該当データ抽出').item.json.automation_en }}'\nGROUP BY a.automation_name_en\nLIMIT 1;"
+      },
+      "type": "n8n-nodes-base.snowflake",
+      "typeVersion": 1,
+      "position": [
+        1760,
+        60
+      ],
+      "id": "063b0b4a-8f2b-4ddd-8fdd-08106dca298d",
+      "name": "統合データ取得",
+      "credentials": {
+        "snowflake": {
+          "id": "JbIzaQVbUV9HdkL2",
+          "name": "n8n_poc"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Claude APIレスポンス処理 (Windows互換・絵文字対応版)\nconst items = $input.all();\nconst response = items[0].json;\nconst previousData = $node[\"Claude用データ準備\"].json;\n\nconst claudeResponse = response.content[0].text;\nconst sqlMatch = claudeResponse.match(/```sql\\n([\\s\\S]*?)\\n```/);\nlet integratedQuery = sqlMatch ? sqlMatch[1] : claudeResponse;\n\n// SQLエスケープ処理（Windows互換・絵文字対応）\nfunction escapeSqlForSnowflake(str) {\n  if (typeof str !== 'string') return '';\n  return str\n    // 絵文字と特殊Unicodeを安全な文字に置換\n    .replace(/[\\u{1F600}-\\u{1F64F}]/gu, '[FACE]')      // 😀😃😄😁😆😅🤣😂🙂🙃😉😊😇\n    .replace(/[\\u{1F300}-\\u{1F5FF}]/gu, '[SYMBOL]')    // 🌀🌁🌂⭐⛄⚡🔥💧🌊\n    .replace(/[\\u{1F680}-\\u{1F6FF}]/gu, '[TRANSPORT]') // 🚀🚁🚂🚃🚄🚅🚆🚇🚈🚉\n    .replace(/[\\u{1F1E0}-\\u{1F1FF}]/gu, '[FLAG]')      // 🇦🇧🇨🇩🇪🇫🇬🇭🇮🇯\n    .replace(/[\\u{2600}-\\u{26FF}]/gu, '[MISC]')        // ☀☁☂☃☄★☆☇☈☉\n    .replace(/[\\u{2700}-\\u{27BF}]/gu, '[DINGBAT]')     // ✂✃✄✅✆✇✈✉✊\n    .replace(/[\\u{1F900}-\\u{1F9FF}]/gu, '[EMOJI]')     // 🤐🤑🤒🤓🤔🤕🤖🤗\n    \n    // 通常のSQLエスケープ処理\n    .replace(/'/g, \"''\")           // シングルクォートをエスケープ\n    .replace(/\\\\/g, '\\\\\\\\')        // バックスラッシュをエスケープ\n    .replace(/\"/g, '\"\"')           // ダブルクォートをエスケープ\n    .replace(/\\n/g, ' ')           // 改行を空白に\n    .replace(/\\r/g, '')            // キャリッジリターンを削除\n    .replace(/\\s+/g, ' ')          // 連続スペースを1つに\n    .replace(/\\t/g, ' ')           // タブを空白に\n    .trim();\n}\n\nconst worksheetName = `${previousData.automation_name}_Integrated_${new Date().toISOString().split('T')[0]}`;\n\nreturn [{\n  json: {\n    automation_name: previousData.automation_name,\n    original_steps: previousData.total_steps,\n    original_sql: previousData.original_sql,\n    \n    // エスケープ済みフィールドを追加\n    original_sql_escaped: escapeSqlForSnowflake(previousData.original_sql),\n    integrated_sql: integratedQuery.trim(),\n    integrated_sql_escaped: escapeSqlForSnowflake(integratedQuery),\n    claude_full_response: claudeResponse,\n    claude_response_escaped: escapeSqlForSnowflake(claudeResponse),\n    \n    worksheet_name: worksheetName,\n    optimization_type: \"claude_integrated\",\n    created_at: new Date().toISOString()\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2280,
+        60
+      ],
+      "id": "25b7de36-7a94-4562-90dc-5cdf904f4fe5",
+      "name": "結果処理"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={\n  \"Content-Type\": \"application/json\",\n  \"x-api-key\": \"{{ $vars.for_n8n_api_key }}\",\n  \"anthropic-version\": \"2023-06-01\"\n}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"model\": \"claude-sonnet-4-20250514\", \"max_tokens\": 4000, \"temperature\": 0.3, \"messages\": [ { \"role\": \"user\", \"content\": $json.prompt } ] } }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2120,
+        60
+      ],
+      "id": "d78c6b53-e6a6-4b0a-b458-c57609efbbd3",
+      "name": "Claude API統合最適化",
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "// 統合データ取得ノードからデータを準備\nconst data = $input.first().json;\n\nconst automationName = data.AUTOMATION_NAME_EN;  // 大文字に修正\nconst totalSteps = data.TOTAL_STEPS;             // 大文字に修正\nconst combinedSql = data.COMBINED_SQL;           // 大文字に修正\n\n// Claude APIへのプロンプト構築\nconst prompt = `あなたはSnowflake SQLの最適化エキスパートです。\n\n以下のMarketingCloud AutomationStudio「${automationName}」の複数ステップクエリを分析し、\n1つの統合された最適化クエリに変換してください。\n\n**Automation名**: ${automationName}\n**総ステップ数**: ${totalSteps}\n\n**現在の個別ステップクエリ**:\n${combinedSql}\n\n**要求事項**:\n1. 全ステップの処理を論理的に統合\n2. 不要な中間テーブル作成を削除\n3. CTEまたはサブクエリで効率化\n4. データの重複処理を排除\n5. パフォーマンスを最適化\n\n**出力形式**:\n- 統合されたSnowflake実行可能SQL\n- 最適化の説明コメント付き\n- 元ステップとの対応関係を明記\n\n統合最適化クエリを生成してください。`;\n\nreturn [{\n  json: {\n    automation_name: automationName,\n    total_steps: totalSteps,\n    prompt: prompt,\n    original_sql: combinedSql\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1940,
+        60
+      ],
+      "id": "0e897ecf-efe6-4690-9eff-f245eaa221b0",
+      "name": "Claude用データ準備"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Loop Step 10: Claude統合結果保存 (簡略版)\nMERGE INTO mc_integrated_worksheets AS target\nUSING (\n    SELECT \n        '{{ $('結果処理').first().json.automation_name }}' as automation_name_en,\n        CAST('{{ $('結果処理').first().json.original_steps }}' AS NUMBER) as original_steps_count,\n        '{{ $('結果処理').first().json.worksheet_name }}' as worksheet_name,\n        'claude_integrated' as optimization_type,\n        CURRENT_TIMESTAMP() as created_at,\n        'SUCCESS' as status\n) AS source\nON target.automation_name_en = source.automation_name_en \n   AND target.optimization_type = source.optimization_type\nWHEN NOT MATCHED THEN\n    INSERT (automation_name_en, original_steps_count, worksheet_name, \n            optimization_type, created_at, status)\n    VALUES (source.automation_name_en, source.original_steps_count, source.worksheet_name,\n            source.optimization_type, source.created_at, source.status)\nWHEN MATCHED THEN\n    UPDATE SET \n        original_steps_count = source.original_steps_count,\n        worksheet_name = source.worksheet_name,\n        created_at = source.created_at,\n        status = source.status;"
+      },
+      "type": "n8n-nodes-base.snowflake",
+      "typeVersion": 1,
+      "position": [
+        2500,
+        60
+      ],
+      "id": "d6cf00b4-230c-4e16-b303-403c3564cc01",
+      "name": "最適化クエリレコード保存",
+      "credentials": {
+        "snowflake": {
+          "id": "JbIzaQVbUV9HdkL2",
+          "name": "n8n_poc"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 改行コードを除去してSQLエスケープ処理\nconst items = $input.all();\n\nreturn items.map(item => {\n  // SQLエスケープ処理関数\n  function escapeSql(str) {\n    if (typeof str !== 'string') return str;\n    return str\n      .replace(/\\n/g, ' ')           // 改行をスペースに置換\n      .replace(/\\r/g, '')            // キャリッジリターンを削除\n      .replace(/\\s+/g, ' ')          // 連続するスペースを1つに\n      .replace(/'/g, \"''\")           // シングルクォートをエスケープ\n      .replace(/\\\\/g, '\\\\\\\\')        // バックスラッシュをエスケープ\n      .trim();                       // 前後の空白を削除\n  }\n\n  return {\n    json: {\n      automation_name_en: escapeSql(item.json.automation_en),\n      step_en: item.json.step_en,\n      code: escapeSql(item.json.code),\n      table: escapeSql(item.json.table),\n      data_action: escapeSql(item.json.data_action)\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1060,
+        60
+      ],
+      "id": "ad2a8092-cf80-48db-8caf-15260185d399",
+      "name": "SQLエスケープ処理"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets読み込み",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "該当データ抽出",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets読み込み": {
+      "main": [
+        [
+          {
+            "node": "Automation一覧抽出",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Automation一覧抽出": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "該当データ抽出": {
+      "main": [
+        [
+          {
+            "node": "SQLエスケープ処理",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MC-Snowflake変換": {
+      "main": [
+        [
+          {
+            "node": "Automation登録",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Automation登録": {
+      "main": [
+        [
+          {
+            "node": "Steps登録",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Steps登録": {
+      "main": [
+        [
+          {
+            "node": "統合データ取得",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "統合データ取得": {
+      "main": [
+        [
+          {
+            "node": "Claude用データ準備",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "結果処理": {
+      "main": [
+        [
+          {
+            "node": "最適化クエリレコード保存",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude API統合最適化": {
+      "main": [
+        [
+          {
+            "node": "結果処理",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude用データ準備": {
+      "main": [
+        [
+          {
+            "node": "Claude API統合最適化",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "最適化クエリレコード保存": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SQLエスケープ処理": {
+      "main": [
+        [
+          {
+            "node": "MC-Snowflake変換",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "54805022-c776-4c46-9fca-3232badc7b36",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "573e3a89e0aefabc134b1e9cac06f24b8c45ef87afe4024c2c347c19fccc7b47"
+  },
+  "id": "tkIO350MktKLYHy2",
+  "tags": []
+}

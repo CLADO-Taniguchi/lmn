@@ -1,0 +1,263 @@
+{
+  "meta": {
+    "instanceId": "redshift-comprehensive-access-v1"
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ask-data-comprehensive",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-input",
+      "name": "包括的データクエリ受信",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "comprehensive-query-jp"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{JSON.stringify({\n  originalQuery: $json.query,\n  timestamp: new Date().toISOString(),\n  sessionId: $json.sessionId || 'session-' + Math.random().toString(36).substr(2, 9),\n  conversationHistory: $json.conversationHistory || [],\n  queryType: 'comprehensive'\n})}}"
+      },
+      "id": "session-management",
+      "name": "セッション管理",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- スキーマとテーブルの確認\nSELECT \n  schemaname,\n  tablename,\n  tableowner\nFROM pg_tables \nWHERE schemaname IN ('public', 'datamart', 'datalake')\nORDER BY schemaname, tablename;",
+        "options": {}
+      },
+      "id": "schema-exploration",
+      "name": "スキーマ探索",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [680, 300],
+      "credentials": {
+        "postgres": {
+          "id": "redshift-db-credentials",
+          "name": "Redshift Database Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "gpt-4",
+        "messages": {
+          "messageType": "text",
+          "message": "以下の情報を使用して、日本語の質問を適切なRedshift SQLクエリに変換してください。\n\n利用可能なスキーマとテーブル：\n{{JSON.stringify($node['スキーマ探索'].json, null, 2)}}\n\n会話履歴：\n{{JSON.stringify($node['セッション管理'].json.conversationHistory, null, 2)}}\n\n現在の質問：{{$node['セッション管理'].json.originalQuery}}\n\nルール：\n1. 全スキーマ（public, datamart, datalake）のテーブルを活用可能\n2. 必要に応じて複数スキーマのJOINを使用\n3. システムビュー（pg_tables, svv_tables等）も活用可能\n4. 会話の文脈を考慮してクエリを生成\n5. 安全なSELECT文のみ生成（DDL/DMLは禁止）\n\nSQLクエリ："
+        },
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "id": "comprehensive-sql-generation",
+      "name": "包括的SQL生成",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [900, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-api-key",
+          "name": "OpenAI API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{JSON.stringify({\n  generatedSql: $node['包括的SQL生成'].json.message.content,\n  originalQuery: $node['セッション管理'].json.originalQuery,\n  sessionId: $node['セッション管理'].json.sessionId,\n  conversationHistory: $node['セッション管理'].json.conversationHistory,\n  availableSchemas: $node['スキーマ探索'].json\n})}}"
+      },
+      "id": "sql-preparation",
+      "name": "SQL準備",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$node['SQL準備'].json.generatedSql}}",
+        "options": {}
+      },
+      "id": "comprehensive-sql-execution",
+      "name": "包括的SQL実行",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [1340, 300],
+      "credentials": {
+        "postgres": {
+          "id": "redshift-db-credentials",
+          "name": "Redshift Database Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "gpt-4",
+        "messages": {
+          "messageType": "text",
+          "message": "以下の包括的なデータベースクエリ結果を、非技術者にもわかりやすい日本語で説明してください。\n\n元の質問：{{$node['SQL準備'].json.originalQuery}}\n\n利用可能なスキーマ情報：\n{{JSON.stringify($node['SQL準備'].json.availableSchemas, null, 2)}}\n\n実行したSQL：\n{{$node['SQL準備'].json.generatedSql}}\n\n実行結果：\n{{JSON.stringify($node['包括的SQL実行'].json, null, 2)}}\n\n会話履歴：\n{{JSON.stringify($node['SQL準備'].json.conversationHistory, null, 2)}}\n\n説明のポイント：\n1. どのスキーマのどのテーブルを使用したか\n2. 結果の意味と重要な洞察\n3. 数値やトレンドの解釈\n4. 会話の流れを考慮した自然な回答\n5. 必要に応じて追加の質問を提案\n\n分かりやすい日本語説明："
+        },
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "id": "comprehensive-explanation",
+      "name": "包括的結果説明",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [1560, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-api-key",
+          "name": "OpenAI API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{JSON.stringify({\n  // 新しい会話エントリを作成\n  newHistoryEntry: {\n    query: $node['SQL準備'].json.originalQuery,\n    response: $node['包括的結果説明'].json.message.content,\n    timestamp: new Date().toISOString(),\n    queryType: 'comprehensive',\n    schemasUsed: $node['SQL準備'].json.availableSchemas.map(t => t.schemaname).filter((v, i, a) => a.indexOf(v) === i),\n    tablesUsed: $node['SQL準備'].json.availableSchemas.map(t => t.schemaname + '.' + t.tablename)\n  },\n  // 会話履歴を更新（最新10件まで保持）\n  updatedHistory: [...($node['SQL準備'].json.conversationHistory || []), {\n    query: $node['SQL準備'].json.originalQuery,\n    response: $node['包括的結果説明'].json.message.content,\n    timestamp: new Date().toISOString(),\n    queryType: 'comprehensive',\n    schemasUsed: $node['SQL準備'].json.availableSchemas.map(t => t.schemaname).filter((v, i, a) => a.indexOf(v) === i),\n    tablesUsed: $node['SQL準備'].json.availableSchemas.map(t => t.schemaname + '.' + t.tablename)\n  }].slice(-10),\n  // セッション情報\n  sessionId: $node['SQL準備'].json.sessionId,\n  originalQuery: $node['SQL準備'].json.originalQuery,\n  generatedSql: $node['SQL準備'].json.generatedSql,\n  results: $node['包括的SQL実行'].json,\n  explanation: $node['包括的結果説明'].json.message.content,\n  availableSchemas: $node['SQL準備'].json.availableSchemas\n})}}"
+      },
+      "id": "history-update",
+      "name": "会話履歴更新",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "response": "={{JSON.stringify({\n  success: true,\n  sessionId: $node['会話履歴更新'].json.sessionId,\n  original_query: $node['会話履歴更新'].json.originalQuery,\n  generated_sql: $node['会話履歴更新'].json.generatedSql,\n  results: $node['会話履歴更新'].json.results,\n  explanation: $node['会話履歴更新'].json.explanation,\n  conversationHistory: $node['会話履歴更新'].json.updatedHistory,\n  availableSchemas: $node['会話履歴更新'].json.availableSchemas,\n  metadata: {\n    timestamp: new Date().toISOString(),\n    queryType: 'comprehensive',\n    schemasUsed: $node['会話履歴更新'].json.newHistoryEntry.schemasUsed,\n    tablesUsed: $node['会話履歴更新'].json.newHistoryEntry.tablesUsed,\n    confidence: 0.95\n  }\n})}}"
+      },
+      "id": "comprehensive-response",
+      "name": "包括的レスポンス返却",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- データベースの概要情報を取得\nSELECT \n  'schemas' as info_type,\n  COUNT(DISTINCT schemaname) as count,\n  string_agg(DISTINCT schemaname, ', ') as details\nFROM pg_tables \nWHERE schemaname IN ('public', 'datamart', 'datalake')\nUNION ALL\nSELECT \n  'tables' as info_type,\n  COUNT(*) as count,\n  string_agg(schemaname || '.' || tablename, ', ') as details\nFROM pg_tables \nWHERE schemaname IN ('public', 'datamart', 'datalake')\nORDER BY info_type;",
+        "options": {}
+      },
+      "id": "database-overview",
+      "name": "データベース概要取得",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [460, 480],
+      "credentials": {
+        "postgres": {
+          "id": "redshift-db-credentials",
+          "name": "Redshift Database Credentials"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "包括的データクエリ受信": {
+      "main": [
+        [
+          {
+            "node": "セッション管理",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "セッション管理": {
+      "main": [
+        [
+          {
+            "node": "スキーマ探索",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "データベース概要取得",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "スキーマ探索": {
+      "main": [
+        [
+          {
+            "node": "包括的SQL生成",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "包括的SQL生成": {
+      "main": [
+        [
+          {
+            "node": "SQL準備",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SQL準備": {
+      "main": [
+        [
+          {
+            "node": "包括的SQL実行",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "包括的SQL実行": {
+      "main": [
+        [
+          {
+            "node": "包括的結果説明",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "包括的結果説明": {
+      "main": [
+        [
+          {
+            "node": "会話履歴更新",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "会話履歴更新": {
+      "main": [
+        [
+          {
+            "node": "包括的レスポンス返却",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+} 

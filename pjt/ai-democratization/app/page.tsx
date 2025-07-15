@@ -60,8 +60,9 @@ export default function Home() {
         }));
 
       // n8nワークフローAPI呼び出し
-      // API Route経由でセッション管理
-      const response = await fetch('/api/n8n-webhook', {
+      // 直接n8nにアクセス（CORS対応が必要）
+      const n8nUrl = process.env.NEXT_PUBLIC_N8N_WEBHOOK_URL || 'https://clado.app.n8n.cloud/webhook/simple-test-20250714';
+      const response = await fetch(n8nUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -104,26 +105,29 @@ export default function Home() {
 
       const data = await response.json();
       
-      // API側から返されたセッションIDを保存
-      if (data.sessionId && data.sessionId !== currentSessionId) {
-        setCurrentSessionId(data.sessionId);
+      // n8nから直接レスポンスを受け取る場合
+      const sessionId = currentSessionId || `session-${Date.now()}`;
+      if (!currentSessionId) {
+        setCurrentSessionId(sessionId);
       }
       
       // より詳細なレスポンスを表示
       let aiContent = data.explanation || 'データを分析しました。';
       
-      // SQLクエリが生成された場合、追加情報を表示
-      if (data.generated_sql) {
-        aiContent += `\n\n実行したクエリ:\n\`\`\`sql\n${data.generated_sql}\n\`\`\``;
+      // SQLクエリが生成された場合、追加情報を表示（n8nの形式に対応）
+      if (data.claude_sql || data.generated_sql) {
+        const sql = data.claude_sql || data.generated_sql;
+        aiContent += `\n\n実行したクエリ:\n\`\`\`sql\n${sql}\n\`\`\``;
       }
       
-      // 結果データがある場合、簡潔に表示
-      if (data.results) {
-        if (Array.isArray(data.results)) {
-          aiContent += `\n\n結果: ${data.results.length}件のデータを取得しました。`;
-        } else if (typeof data.results === 'object') {
+      // 結果データがある場合、簡潔に表示（n8nの形式に対応）
+      if (data.redshift_results || data.results) {
+        const results = data.redshift_results || data.results;
+        if (Array.isArray(results)) {
+          aiContent += `\n\n結果: ${results.length}件のデータを取得しました。`;
+        } else if (typeof results === 'object') {
           // オブジェクトの場合、JSONとして表示
-          aiContent += `\n\n結果:\n\`\`\`json\n${JSON.stringify(data.results, null, 2)}\n\`\`\``;
+          aiContent += `\n\n結果:\n\`\`\`json\n${JSON.stringify(results, null, 2)}\n\`\`\``;
         }
       }
       

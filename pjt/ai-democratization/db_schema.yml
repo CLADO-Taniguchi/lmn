@@ -1,0 +1,79 @@
+# Database Schema Definition
+# This file contains all table structures for SQL generation
+
+datamart:
+  aas_summary:
+    description: "売上サマリーテーブル"
+    columns:
+      - name: id
+        type: bigint
+        primary_key: true
+      - name: region_name
+        type: varchar(100)
+        description: "地域名（都道府県）"
+      - name: store_name
+        type: varchar(200)
+        description: "店舗名"
+      - name: sales_amount
+        type: decimal(15,2)
+        description: "売上金額"
+      - name: transaction_date
+        type: date
+        description: "取引日"
+      - name: product_category
+        type: varchar(50)
+        description: "商品カテゴリー"
+      - name: customer_count
+        type: integer
+        description: "来客数"
+    indexes:
+      - columns: [region_name, transaction_date]
+      - columns: [product_category]
+    
+  customer_master:
+    description: "顧客マスタテーブル"
+    columns:
+      - name: customer_id
+        type: bigint
+        primary_key: true
+      - name: customer_name
+        type: varchar(200)
+      - name: email
+        type: varchar(255)
+      - name: region_code
+        type: varchar(10)
+      - name: created_at
+        type: timestamp
+        
+  product_master:
+    description: "商品マスタテーブル"
+    columns:
+      - name: product_id
+        type: bigint
+        primary_key: true
+      - name: product_name
+        type: varchar(300)
+      - name: category_id
+        type: integer
+      - name: price
+        type: decimal(10,2)
+      - name: is_active
+        type: boolean
+        
+# 他のスキーマも必要に応じて追加
+sales:
+  daily_transactions:
+    description: "日次取引データ"
+    columns:
+      - name: transaction_id
+        type: bigint
+      - name: customer_id
+        type: bigint
+      - name: product_id
+        type: bigint
+      - name: quantity
+        type: integer
+      - name: amount
+        type: decimal(12,2)
+      - name: transaction_datetime
+        type: timestamp 
